@@ -4,12 +4,12 @@ if (!defined('__TYPECHO_ROOT_DIR__')) exit;
 include 'lib/class.geetestlib.php';
 
 /**
- * 极验验证插件，用于用户登录
+ * 极验验证插件，用于用户登录、注册，支持定制化的注册登录页面也添加验证码如TePass插件
  *
  * @package Geetest
- * @author 菠菜
- * @version 1.0.0
- * @link https://zhb127.com
+ * @author 小胖狐
+ * @version 1.1.0
+ * @link http://zsduo.com
  *
  */
 class Geetest_Plugin implements Typecho_Plugin_Interface
@@ -72,26 +72,36 @@ class Geetest_Plugin implements Typecho_Plugin_Interface
      */
     public static function config(Typecho_Widget_Helper_Form $form)
     {
-        $captchaId = new Typecho_Widget_Helper_Form_Element_Text('captchaId', null, '', _t('公钥：'));
-        $privateKey = new Typecho_Widget_Helper_Form_Element_Text('privateKey', null, '', _t('私钥：'));
+        
+        $isOpenTypechoUrl = new Typecho_Widget_Helper_Form_Element_Checkbox('isOpenTypechoUrl', [
+            "typechoSignin" => _t('登录界面（/admin/login.php）'),
+            "typechoSignup" => _t('注册界面（/admin/register.php）')
+        ], array(), _t('是否开启Typecho自带界面的验证码，勾选则开启'), _t('插件作者：<a href="http://zsduo.com">小胖狐</a>'));
+        
+        $captchaId = new Typecho_Widget_Helper_Form_Element_Text('captchaId', null, '', _t('公钥（ID）：'));
+        $privateKey = new Typecho_Widget_Helper_Form_Element_Text('privateKey', null, '', _t('私钥（KEY）：'));
 
         $dismode = new Typecho_Widget_Helper_Form_Element_Select('dismod', array(
-            'float' => '浮动式',
-            'embed' => '嵌入式',
-            'popup' => '弹出框'
+            'float' => '浮动式（float）',
+            'embed' => '嵌入式（embed）',
+            'popup' => '弹出框（popup）'
         ), 'float', _t('展现形式：'));
 
-        $cdnUrl = new Typecho_Widget_Helper_Form_Element_Text('cdnUrl', null, '', _t('内容分发地址：'), '注意使用 https 协议。');
+        $cdnUrl = new Typecho_Widget_Helper_Form_Element_Text('cdnUrl', null, '', _t('引入JS的CDN加速地址：'), _t('注意使用 https 协议<br />留空默认引入本地/static/gt.js文件，不知道的可留空'));
+        
+        $otherSignUrl = new Typecho_Widget_Helper_Form_Element_Textarea('otherSignUrl', null, '', _t('其它定制化登录注册地址：'), _t('插件支持在定制化的登录注册地址添加极验验证码<br />比如在TePass插件的注册地址添加验证码可以写：/tepass/signup<br />一行一个，不知道的可留空'));
 
         $debugMode = new Typecho_Widget_Helper_Form_Element_Select('debugMode', array(
             '0' => '关闭',
             '1' => '开启'
-        ), '0', _t('调试模式：'), '开启时，不会禁用提交按钮，用于测试插件是否生效。');
-
+        ), '0', _t('调试模式：'), _t('开启时，不会禁用提交按钮，用于测试插件是否生效。'));
+        
+        $form->addInput($isOpenTypechoUrl);
         $form->addInput($captchaId);
         $form->addInput($privateKey);
         $form->addInput($dismode);
         $form->addInput($cdnUrl);
+        $form->addInput($otherSignUrl);
         $form->addInput($debugMode);
     }
 
@@ -128,12 +138,37 @@ class Geetest_Plugin implements Typecho_Plugin_Interface
         $widgetOptions = Typecho_Widget::widget('Widget_Options');
         $widgetRequest = $widgetOptions->request;
         $loginUrl = $widgetOptions->loginUrl;
+        $registerUrl = $widgetOptions->registerUrl;
         $currentUrl = $widgetRequest->getRequestUrl();
-        if (false === strpos($currentUrl, $loginUrl)) {
+        // 取出插件的配置
+        $pluginOptions = Helper::options()->plugin('Geetest');
+        // 取出是否开启typecho自身的页面验证码的配置
+        $isOpenTypechoUrl = $pluginOptions->isOpenTypechoUrl;
+        // 取出其他定制化界面的配置
+        $otherSignUrl = $pluginOptions->otherSignUrl;
+        // 初始化当前界面是否在其他定制化界面中的变量及判断是否当前界面符合
+        $HasOtherSignUrl = false;
+        if (is_string($otherSignUrl)) {
+            // 按换行符切割textarea，请注意一定要用双引号\r\n！不要用单引号！否则会失效，这块测了很久才解决的bug，告诉大家引以为戒
+            $otherSignUrlArray = explode("\r\n", $otherSignUrl);
+            foreach ($otherSignUrlArray as $thisUrl) {
+                if (false !== strpos($currentUrl, $thisUrl)) {
+                    $HasOtherSignUrl = true;
+                    break;
+                }
+            }
+        }
+        // 不符合需添加验证码的界面不会出现验证码
+        if (false === strpos($currentUrl, $loginUrl) && false === strpos($currentUrl, $registerUrl) && false === $HasOtherSignUrl) {
             return;
+        } else {
+            if (is_array($isOpenTypechoUrl)) {
+                if ((!in_array('typechoSignin', $isOpenTypechoUrl) && false !== strpos($currentUrl, $loginUrl)) || (!in_array('typechoSignup', $isOpenTypechoUrl) && false !== strpos($currentUrl, $registerUrl))) {
+                    return;
+                }
+            }
         }
 
-        $pluginOptions = Helper::options()->plugin('Geetest');
         $cdnUrl = ($pluginOptions->cdnUrl ? $pluginOptions->cdnUrl : Helper::options()->pluginUrl . '/Geetest/static/gt.js');
         $debugMode = (bool)($pluginOptions->debugMode);
 
