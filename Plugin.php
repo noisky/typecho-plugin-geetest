@@ -4,12 +4,13 @@ if (!defined('__TYPECHO_ROOT_DIR__')) exit;
 include 'lib/class.geetestlib.php';
 
 /**
- * 极验验证插件，用于用户登录、注册，支持定制化的注册登录页面也添加验证码如TePass插件
+ * 极验验证插件，用于用户登录、用户评论时使用极验提供的滑动验证码，适配了Material主题
  *
  * @package Geetest
- * @author 小胖狐
- * @version 1.1.0
+ * @author 小胖狐 && 饭饭
+ * @version 1.2.0
  * @link http://zsduo.com
+ * @link https://ffis.me
  *
  */
 class Geetest_Plugin implements Typecho_Plugin_Interface
@@ -32,6 +33,11 @@ class Geetest_Plugin implements Typecho_Plugin_Interface
 
         // 注册用户登录成功钩子
         Typecho_Plugin::factory('Widget_User')->loginSucceed = array(__CLASS__, 'verifyCaptcha');
+
+        // 评论钩子
+        Typecho_Plugin::factory('Widget_Feedback')->comment = array(__CLASS__, 'commentCaptchaVerify');
+        Typecho_Plugin::factory('Widget_Feedback')->trackback = array(__CLASS__, 'commentCaptchaVerify');
+        Typecho_Plugin::factory('Widget_XmlRpc')->pingback = array(__CLASS__, 'commentCaptchaVerify');
 
         // 暴露插件函数（用于在自定义表单中渲染极验验证，以及在自定义逻辑中调用极验验证）
         Typecho_Plugin::factory('Geetest')->renderCaptcha = array(__CLASS__, 'renderCaptcha');
@@ -73,10 +79,10 @@ class Geetest_Plugin implements Typecho_Plugin_Interface
     public static function config(Typecho_Widget_Helper_Form $form)
     {
         
-        $isOpenTypechoUrl = new Typecho_Widget_Helper_Form_Element_Checkbox('isOpenTypechoUrl', [
-            "typechoSignin" => _t('登录界面（/admin/login.php）'),
-            "typechoSignup" => _t('注册界面（/admin/register.php）')
-        ], array(), _t('是否开启Typecho自带界面的验证码，勾选则开启'), _t('插件作者：<a href="http://zsduo.com">小胖狐</a>'));
+        $isOpenGeetestPage = new Typecho_Widget_Helper_Form_Element_Checkbox('isOpenGeetestPage', [
+            "typechoLogin" => _t('登录界面'),
+            "typechoComment" => _t('评论页面')
+        ], array(), _t('开启极验验证码的页面，勾选则开启'), _t('开启评论验证码后需在主题的评论的模板 comments.php 中添加如下字段：<textarea><div id="captcha"></div><?php Geetest_Plugin::commentCaptchaRender(); ?></textarea>'));
         
         $captchaId = new Typecho_Widget_Helper_Form_Element_Text('captchaId', null, '', _t('公钥（ID）：'));
         $privateKey = new Typecho_Widget_Helper_Form_Element_Text('privateKey', null, '', _t('私钥（KEY）：'));
@@ -88,20 +94,17 @@ class Geetest_Plugin implements Typecho_Plugin_Interface
         ), 'float', _t('展现形式：'));
 
         $cdnUrl = new Typecho_Widget_Helper_Form_Element_Text('cdnUrl', null, '', _t('引入JS的CDN加速地址：'), _t('注意使用 https 协议<br />留空默认引入本地/static/gt.js文件，不知道的可留空'));
-        
-        $otherSignUrl = new Typecho_Widget_Helper_Form_Element_Textarea('otherSignUrl', null, '', _t('其它定制化登录注册地址：'), _t('插件支持在定制化的登录注册地址添加极验验证码<br />比如在TePass插件的注册地址添加验证码可以写：/tepass/signup<br />一行一个，不知道的可留空'));
 
         $debugMode = new Typecho_Widget_Helper_Form_Element_Select('debugMode', array(
             '0' => '关闭',
             '1' => '开启'
         ), '0', _t('调试模式：'), _t('开启时，不会禁用提交按钮，用于测试插件是否生效。'));
         
-        $form->addInput($isOpenTypechoUrl);
+        $form->addInput($isOpenGeetestPage);
         $form->addInput($captchaId);
         $form->addInput($privateKey);
         $form->addInput($dismode);
         $form->addInput($cdnUrl);
-        $form->addInput($otherSignUrl);
         $form->addInput($debugMode);
     }
 
@@ -130,46 +133,25 @@ class Geetest_Plugin implements Typecho_Plugin_Interface
     }
 
     /**
-     * 渲染验证码
+     * 渲染后台登陆 验证码
      */
     public static function renderCaptcha()
     {
         // 判断是否登录页面
         $widgetOptions = Typecho_Widget::widget('Widget_Options');
         $widgetRequest = $widgetOptions->request;
-        $loginUrl = $widgetOptions->loginUrl;
-        $registerUrl = $widgetOptions->registerUrl;
-        $currentUrl = $widgetRequest->getRequestUrl();
+        $currentRequestUrl = $widgetRequest->getRequestUrl();
+        if (!stripos($currentRequestUrl, 'login.php')) {
+            return;
+        }
         // 取出插件的配置
         $pluginOptions = Helper::options()->plugin('Geetest');
-        // 取出是否开启typecho自身的页面验证码的配置
-        $isOpenTypechoUrl = $pluginOptions->isOpenTypechoUrl;
-        // 取出其他定制化界面的配置
-        $otherSignUrl = $pluginOptions->otherSignUrl;
-        // 初始化当前界面是否在其他定制化界面中的变量及判断是否当前界面符合
-        $HasOtherSignUrl = false;
-        if (is_string($otherSignUrl)) {
-            // 按换行符切割textarea，请注意一定要用双引号\r\n！不要用单引号！否则会失效，这块测了很久才解决的bug，告诉大家引以为戒
-            $otherSignUrlArray = explode("\r\n", $otherSignUrl);
-            foreach ($otherSignUrlArray as $thisUrl) {
-                if (false !== strpos($currentUrl, $thisUrl)) {
-                    $HasOtherSignUrl = true;
-                    break;
-                }
-            }
-        }
-        // 不符合需添加验证码的界面不会出现验证码
-        if (false === strpos($currentUrl, $loginUrl) && false === strpos($currentUrl, $registerUrl) && false === $HasOtherSignUrl) {
+        $isOpenGeetestPage = $pluginOptions->isOpenGeetestPage;
+        // 判断是否开启登陆页的验证码
+        if (!in_array("typechoLogin", $isOpenGeetestPage)) {
             return;
-        } else {
-            if (is_array($isOpenTypechoUrl)) {
-                if ((!in_array('typechoSignin', $isOpenTypechoUrl) && false !== strpos($currentUrl, $loginUrl)) || (!in_array('typechoSignup', $isOpenTypechoUrl) && false !== strpos($currentUrl, $registerUrl))) {
-                    return;
-                }
-            }
         }
-
-        $cdnUrl = ($pluginOptions->cdnUrl ? $pluginOptions->cdnUrl : Helper::options()->pluginUrl . '/Geetest/static/gt.js');
+        $cdnUrl = ($pluginOptions->cdnUrl ? $pluginOptions->cdnUrl : Helper::options()->pluginUrl . '/Geetest/static/gt.min.js');
         $debugMode = (bool)($pluginOptions->debugMode);
 
         $disableButtonJs = '';
@@ -203,7 +185,7 @@ EOF;
         var jqFormSubmit = jqForm.find(":submit");
         
         // 在表单提交按钮之前添加极验验证元素
-        jqFormSubmit.parent().before('<div id="gt-captcha"><p class="waiting">正在加载验证码......</p></div>');
+        jqFormSubmit.parent().before('<div id="gt-captcha"><p class="waiting">行为验证™ 安全组件加载中...</p></div>');
         
         // 获取极验验证元素
         var jqGtCaptcha = $("#gt-captcha");
@@ -233,7 +215,7 @@ EOF;
             type: "get",
             dataType: "json",
             success: function (data) {
-                console.log(data);
+                // console.log(data);
                 initGeetest({
                     gt: data.gt,
                     challenge: data.challenge,
@@ -249,27 +231,147 @@ EOF;
     }
 
     /**
-     * 验证验证码
+     * 渲染评论验证码
+     * @throws Typecho_Plugin_Exception
+     */
+    public static function commentCaptchaRender() {
+        //判断插件是否激活
+        $options = Typecho_Widget::widget('Widget_Options');
+        if (!isset($options->plugins['activated']['Geetest'])) {
+            echo '<div>极验评论验证码插件未激活</div>';
+            return;
+        }
+
+        // 取出插件的配置
+        $pluginOptions = Helper::options()->plugin('Geetest');
+        $isOpenGeetestPage = $pluginOptions->isOpenGeetestPage;
+        //判断是否开启评论页的验证码
+        if (!in_array("typechoComment", $isOpenGeetestPage)) {
+            return;
+        }
+        $cdnUrl = ($pluginOptions->cdnUrl ? $pluginOptions->cdnUrl : Helper::options()->pluginUrl . '/Geetest/static/gt.min.js');
+        $debugMode = (bool)($pluginOptions->debugMode);
+
+        $disableButtonJs = '';
+        $disableSubmitJs = '';
+        if (!$debugMode) {
+            $disableButtonJs = '$("#sub_btn").attr({disabled:true}).addClass("gt-btn-disabled");';
+            $disableSubmitJs = <<<EOF
+            $("#sub_btn").submit(function (e) {
+                var validate = captchaObj.getValidate();
+                if (!validate) {
+                    e.preventDefault();
+                }
+            });
+EOF;
+        }
+
+        $ajaxUri = '/action/geetest?do=ajaxResponseCaptchaData';
+
+        echo <<<EOF
+        <style rel="stylesheet">
+        #gt-captcha { line-height: 44px; }
+        .gt-btn-disabled { background-color: #a3b7c1!important; color: #fff!important; cursor: no-drop!important; }
+        </style>
+        
+        <script src="{$cdnUrl}"></script>
+        <script>
+            window.onload = function () {
+                $("#captcha").append('<div id="gt-captcha"><p class="waiting">行为验证™ 安全组件加载中...</p></div>');
+    
+                // 获取极验验证元素
+                var jqGtCaptcha = $("#gt-captcha");
+                var jqGtCaptchaWaiting = $("#gt-captcha .waiting");
+                var jqGtCaptchaNotice = $("#gt-captcha .notice");
+                
+                // 定义极验验证初始化回调函数
+                var gtInitCallback = function (captchaObj) {
+                    
+                    captchaObj.appendTo(jqGtCaptcha);
+                    
+                    captchaObj.onSuccess(function () {
+                        $('#sub_btn').attr({disabled:false}).removeClass("gt-btn-disabled");
+                    });
+                    
+                    captchaObj.onReady(function () {
+                        jqGtCaptchaWaiting.remove();
+                        // 禁用表单提交按钮
+                        $disableButtonJs
+                    });
+                    
+                    $disableSubmitJs
+                };
+                
+                $.ajax({
+                    url: "{$ajaxUri}&t=" + (new Date()).getTime(),
+                    type: "get",
+                    dataType: "json",
+                    success: function (data) {
+                        // console.log(data);
+                        initGeetest({
+                            gt: data.gt,
+                            challenge: data.challenge,
+                            new_captcha: data.new_captcha,
+                            product: "{$pluginOptions->dismod}",
+                            offline: !data.success,
+                            width: "200px",
+                        }, gtInitCallback);
+                    }
+                });
+            }
+        </script>
+EOF;
+    }
+
+    /**
+     * 评论验证码 校验
+     * @access public
+     * @param array $comment 评论内容
+     */
+    public static function commentCaptchaVerify($comment)
+    {
+        // 取出插件的配置
+        $pluginOptions = Helper::options()->plugin('Geetest');
+        $isOpenGeetestPage = $pluginOptions->isOpenGeetestPage;
+        //判断是否开启评论页的验证码
+        if (in_array("typechoComment", $isOpenGeetestPage)) {
+            if (!self::_verifyCaptcha()) {
+                echo "<script language=\"JavaScript\">alert(\"验证失败，请重新验证！\");window.history.go(-1);</script>";
+                exit();
+            }
+        }
+        return $comment;
+
+    }
+
+    /**
+     * 后台登陆验证码 校验
      */
     public static function verifyCaptcha()
     {
-        if (!self::_verifyCaptcha()) {
-            Typecho_Widget::widget('Widget_Notice')->set(_t('验证码错误'), 'error');
-            Typecho_Widget::widget('Widget_User')->logout();
-            Typecho_Widget::widget('Widget_Options')->response->goBack();
+        //取出插件的配置
+        $pluginOptions = Helper::options()->plugin('Geetest');
+        $isOpenGeetestPage = $pluginOptions->isOpenGeetestPage;
+        //判断是否开启评论页的验证码
+        if (in_array("typechoLogin", $isOpenGeetestPage)) {
+            if (!self::_verifyCaptcha()) {
+                Typecho_Widget::widget('Widget_Notice')->set(_t('验证码错误'), 'error');
+                Typecho_Widget::widget('Widget_User')->logout();
+                Typecho_Widget::widget('Widget_Options')->response->goBack();
+            }
         }
     }
 
     /**
-     * 验证验证码
+     * 校验验证码 方法
      *
      * @return int
      */
     private static function _verifyCaptcha()
     {
-        // 如果插件渲染失败，则默认验证通过
+        // 如果插件渲染失败，则默认验证不通过
         if (!isset($_POST['geetest_challenge']) || !isset($_POST['geetest_validate']) || !isset($_POST['geetest_seccode'])) {
-            return 1;
+            return 0;
         }
 
         @session_start();
