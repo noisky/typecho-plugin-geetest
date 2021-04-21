@@ -8,7 +8,7 @@ include 'lib/class.geetestlib.php';
  *
  * @package Geetest
  * @author 小胖狐 && 饭饭
- * @version 1.2.0
+ * @version 1.2.1
  * @link http://zsduo.com
  * @link https://ffis.me
  *
@@ -82,7 +82,7 @@ class Geetest_Plugin implements Typecho_Plugin_Interface
         $isOpenGeetestPage = new Typecho_Widget_Helper_Form_Element_Checkbox('isOpenGeetestPage', [
             "typechoLogin" => _t('登录界面'),
             "typechoComment" => _t('评论页面')
-        ], array(), _t('开启极验验证码的页面，勾选则开启'), _t('开启评论验证码后需在主题的评论的模板 comments.php 中添加如下字段：<textarea><div id="captcha"></div><?php Geetest_Plugin::commentCaptchaRender(); ?></textarea>'));
+        ], array(), _t('开启极验验证码的页面，勾选则开启'), _t('开启评论验证码后需在主题的评论的模板 comments.php 中添加如下字段：<textarea><div id="captcha"></div><?php Geetest_Plugin::commentCaptchaRender(); ?>&#10;<script src="https://cdn.jsdelivr.net/npm/jquery@2.2.4/dist/jquery.min.js"></script></textarea>'));
         
         $captchaId = new Typecho_Widget_Helper_Form_Element_Text('captchaId', null, '', _t('公钥（ID）：'));
         $privateKey = new Typecho_Widget_Helper_Form_Element_Text('privateKey', null, '', _t('私钥（KEY）：'));
