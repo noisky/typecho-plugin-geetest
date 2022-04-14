@@ -277,49 +277,49 @@ EOF;
         
         <script src="{$cdnUrl}"></script>
         <script>
-            window.onload = function () {
-                $("#captcha").append('<div id="gt-captcha"><p class="waiting">行为验证™ 安全组件加载中...</p></div>');
-    
-                // 获取极验验证元素
-                var jqGtCaptcha = $("#gt-captcha");
-                var jqGtCaptchaWaiting = $("#gt-captcha .waiting");
-                var jqGtCaptchaNotice = $("#gt-captcha .notice");
+        $(document).ready(function(){
+            $("#captcha").append('<div id="gt-captcha"><p class="waiting">行为验证™ 安全组件加载中...</p></div>');
+
+            // 获取极验验证元素
+            var jqGtCaptcha = $("#gt-captcha");
+            var jqGtCaptchaWaiting = $("#gt-captcha .waiting");
+            var jqGtCaptchaNotice = $("#gt-captcha .notice");
+            
+            // 定义极验验证初始化回调函数
+            var gtInitCallback = function (captchaObj) {
                 
-                // 定义极验验证初始化回调函数
-                var gtInitCallback = function (captchaObj) {
-                    
-                    captchaObj.appendTo(jqGtCaptcha);
-                    
-                    captchaObj.onSuccess(function () {
-                        $('#sub_btn').attr({disabled:false}).removeClass("gt-btn-disabled");
-                    });
-                    
-                    captchaObj.onReady(function () {
-                        jqGtCaptchaWaiting.remove();
-                        // 禁用表单提交按钮
-                        $disableButtonJs
-                    });
-                    
-                    $disableSubmitJs
-                };
+                captchaObj.appendTo(jqGtCaptcha);
                 
-                $.ajax({
-                    url: "{$ajaxUri}&t=" + (new Date()).getTime(),
-                    type: "get",
-                    dataType: "json",
-                    success: function (data) {
-                        // console.log(data);
-                        initGeetest({
-                            gt: data.gt,
-                            challenge: data.challenge,
-                            new_captcha: data.new_captcha,
-                            product: "{$pluginOptions->dismod}",
-                            offline: !data.success,
-                            width: "200px",
-                        }, gtInitCallback);
-                    }
+                captchaObj.onSuccess(function () {
+                    $('#sub_btn').attr({disabled:false}).removeClass("gt-btn-disabled");
                 });
-            }
+                
+                captchaObj.onReady(function () {
+                    jqGtCaptchaWaiting.remove();
+                    // 禁用表单提交按钮
+                    $disableButtonJs
+                });
+                
+                $disableSubmitJs
+            };
+            
+            $.ajax({
+                url: "{$ajaxUri}&t=" + (new Date()).getTime(),
+                type: "get",
+                dataType: "json",
+                success: function (data) {
+                    // console.log(data);
+                    initGeetest({
+                        gt: data.gt,
+                        challenge: data.challenge,
+                        new_captcha: data.new_captcha,
+                        product: "{$pluginOptions->dismod}",
+                        offline: !data.success,
+                        width: "200px",
+                    }, gtInitCallback);
+                }
+            });
+        })
         </script>
 EOF;
     }
