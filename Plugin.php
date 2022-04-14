@@ -168,7 +168,7 @@ class Geetest_Plugin implements Typecho_Plugin_Interface
 EOF;
         }
 
-        $ajaxUri = '/action/geetest?do=ajaxResponseCaptchaData';
+        $ajaxUri = '/index.php/action/geetest?do=ajaxResponseCaptchaData';
 
         echo <<<EOF
         <style rel="stylesheet">
@@ -266,7 +266,7 @@ EOF;
 EOF;
         }
 
-        $ajaxUri = '/action/geetest?do=ajaxResponseCaptchaData';
+        $ajaxUri = '/index.php/action/geetest?do=ajaxResponseCaptchaData';
 
         echo <<<EOF
         <style rel="stylesheet">
