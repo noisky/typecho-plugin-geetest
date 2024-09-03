@@ -7,11 +7,11 @@ include 'lib/class.geetestlib.php';
  * 极验验证插件，用于用户登录、用户评论时使用极验提供的滑动验证码，适配了Material主题
  *
  * @package Geetest
- * @author 小胖狐 && 饭饭
- * @version 1.2.1
+ * @author 小胖狐 && 饭饭 && dream2333
+ * @version 1.2.2
  * @link http://zsduo.com
  * @link https://ffis.me
- *
+ * @link https://resourch.com
  */
 class Geetest_Plugin implements Typecho_Plugin_Interface
 {
@@ -82,11 +82,14 @@ class Geetest_Plugin implements Typecho_Plugin_Interface
         $isOpenGeetestPage = new Typecho_Widget_Helper_Form_Element_Checkbox('isOpenGeetestPage', [
             "typechoLogin" => _t('登录界面'),
             "typechoComment" => _t('评论页面')
-        ], array(), _t('开启极验验证码的页面，勾选则开启'), _t('开启评论验证码后需在主题的评论的模板 comments.php 中添加如下字段：<textarea><div id="captcha"></div><?php Geetest_Plugin::commentCaptchaRender(); ?>&#10;<script src="https://cdn.jsdelivr.net/npm/jquery@2.2.4/dist/jquery.min.js"></script></textarea>'));
+        ], 
+        array(), 
+        _t('开启极验验证码的页面，勾选则开启'), 
+        _t('开启评论验证码后需在主题的评论的模板 comments.php 的 form元素 中添加第一行极验的div，如当前使用的主题没有jQuery，还需在此之前引入第二行的jQuery：<textarea><div id="captcha"></div><?php Geetest_Plugin::commentCaptchaRender(); ?>&#10;<script src="https://cdn.jsdelivr.net/npm/jquery@2.2.4/dist/jquery.min.js"></script></textarea>'),);
         
         $captchaId = new Typecho_Widget_Helper_Form_Element_Text('captchaId', null, '', _t('公钥（ID）：'));
         $privateKey = new Typecho_Widget_Helper_Form_Element_Text('privateKey', null, '', _t('私钥（KEY）：'));
-
+        $buttonSelector = new Typecho_Widget_Helper_Form_Element_Text('buttonSelector', null, '.submit', _t('评论按钮的Jquery选择器，默认为".submit"，如果第三方主题使用了自定义的css而导致无法找到按钮，可更改为对应的jq选择器'));
         $dismode = new Typecho_Widget_Helper_Form_Element_Select('dismod', array(
             'float' => '浮动式（float）',
             'embed' => '嵌入式（embed）',
@@ -103,6 +106,7 @@ class Geetest_Plugin implements Typecho_Plugin_Interface
         $form->addInput($isOpenGeetestPage);
         $form->addInput($captchaId);
         $form->addInput($privateKey);
+        $form->addInput($buttonSelector);
         $form->addInput($dismode);
         $form->addInput($cdnUrl);
         $form->addInput($debugMode);
@@ -256,9 +260,10 @@ EOF;
         $disableButtonJs = '';
         $disableSubmitJs = '';
         if (!$debugMode) {
-            $disableButtonJs = '$("#sub_btn").attr({disabled:true}).addClass("gt-btn-disabled");';
+            $buttonSelector = $pluginOptions->buttonSelector;
+            $disableButtonJs = '$("'.$buttonSelector.'").attr({disabled:true}).addClass("gt-btn-disabled");';
             $disableSubmitJs = <<<EOF
-            $("#sub_btn").submit(function (e) {
+            $("$buttonSelector").submit(function (e) {
                 var validate = captchaObj.getValidate();
                 if (!validate) {
                     e.preventDefault();
@@ -277,7 +282,7 @@ EOF;
         
         <script src="{$cdnUrl}"></script>
         <script>
-            window.onload = function () {
+            $(document).ready(function () {
                 $("#captcha").append('<div id="gt-captcha"><p class="waiting">行为验证™ 安全组件加载中...</p></div>');
     
                 // 获取极验验证元素
@@ -291,7 +296,7 @@ EOF;
                     captchaObj.appendTo(jqGtCaptcha);
                     
                     captchaObj.onSuccess(function () {
-                        $('#sub_btn').attr({disabled:false}).removeClass("gt-btn-disabled");
+                        $('#comment-submit').attr({disabled:false}).removeClass("gt-btn-disabled");
                     });
                     
                     captchaObj.onReady(function () {
@@ -319,7 +324,7 @@ EOF;
                         }, gtInitCallback);
                     }
                 });
-            }
+            })
         </script>
 EOF;
     }
