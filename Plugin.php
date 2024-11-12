@@ -7,10 +7,11 @@ include 'lib/class.geetestlib.php';
  * 极验验证插件，用于用户登录、用户评论时使用极验提供的滑动验证码，适配了Material主题
  *
  * @package Geetest
- * @author 小胖狐 && 饭饭
+ * @author 小胖狐 && 饭饭 && CairBin
  * @version 1.2.1
  * @link http://zsduo.com
  * @link https://ffis.me
+ * @link https://cairbin.top
  *
  */
 class Geetest_Plugin implements Typecho_Plugin_Interface
@@ -277,50 +278,54 @@ EOF;
         
         <script src="{$cdnUrl}"></script>
         <script>
-            window.onload = function () {
-                $("#captcha").append('<div id="gt-captcha"><p class="waiting">行为验证™ 安全组件加载中...</p></div>');
-    
-                // 获取极验验证元素
-                var jqGtCaptcha = $("#gt-captcha");
-                var jqGtCaptchaWaiting = $("#gt-captcha .waiting");
-                var jqGtCaptchaNotice = $("#gt-captcha .notice");
-                
-                // 定义极验验证初始化回调函数
-                var gtInitCallback = function (captchaObj) {
-                    
-                    captchaObj.appendTo(jqGtCaptcha);
-                    
-                    captchaObj.onSuccess(function () {
-                        $('#sub_btn').attr({disabled:false}).removeClass("gt-btn-disabled");
-                    });
-                    
-                    captchaObj.onReady(function () {
-                        jqGtCaptchaWaiting.remove();
-                        // 禁用表单提交按钮
-                        $disableButtonJs
-                    });
-                    
-                    $disableSubmitJs
-                };
-                
-                $.ajax({
-                    url: "{$ajaxUri}&t=" + (new Date()).getTime(),
-                    type: "get",
-                    dataType: "json",
-                    success: function (data) {
-                        // console.log(data);
-                        initGeetest({
-                            gt: data.gt,
-                            challenge: data.challenge,
-                            new_captcha: data.new_captcha,
-                            product: "{$pluginOptions->dismod}",
-                            offline: !data.success,
-                            width: "200px",
-                        }, gtInitCallback);
-                    }
+        function initializeGeetestCaptcha() {
+            $("#captcha").html('<div id="gt-captcha"><p class="waiting">行为验证™ 安全组件加载中...</p></div>');
+
+            var jqGtCaptcha = $("#gt-captcha");
+            var jqGtCaptchaWaiting = $("#gt-captcha .waiting");
+
+            // 定义极验验证初始化回调函数
+            var gtInitCallback = function (captchaObj) {
+                captchaObj.appendTo(jqGtCaptcha);
+
+                captchaObj.onSuccess(function () {
+                    $('#sub_btn').attr({disabled: false}).removeClass("gt-btn-disabled");
                 });
-            }
-        </script>
+
+                captchaObj.onReady(function () {
+                    jqGtCaptchaWaiting.remove();
+                    // 禁用表单提交按钮
+                    $disableButtonJs
+                });
+
+                $disableSubmitJs
+            };
+
+            $.ajax({
+                url: "{$ajaxUri}&t=" + (new Date()).getTime(),
+                type: "get",
+                dataType: "json",
+                success: function (data) {
+                    initGeetest({
+                        gt: data.gt,
+                        challenge: data.challenge,
+                        new_captcha: data.new_captcha,
+                        product: "{$pluginOptions->dismod}",
+                        offline: !data.success,
+                        width: "200px",
+                    }, gtInitCallback);
+                }
+            });
+        }
+
+        // 页面加载时初始化
+        window.onload = initializeGeetestCaptcha;
+
+        // PJAX 事件监听器
+        $(document).on('pjax:end', function() {
+            initializeGeetestCaptcha();
+        });
+    </script>
 EOF;
     }
 
