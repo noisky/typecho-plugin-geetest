@@ -3,7 +3,9 @@
 极验验证插件，用于用户登录、用户评论时使用极验提供的滑动验证码，适配了Material主题
 
 ### 更新说明
-保留原插件的登陆验证功能，新增评论验证功能
+保留原插件的登陆验证功能，新增评论验证功能。
+
+此版本添加了评论的PJAX支持。原来版本评论验证是页面刷新的时候进行初始化的，在某些启用了PJAX的主题（如Handsome）无法显示Geetest的验证框。
 
 ### 使用方法
 
@@ -16,12 +18,24 @@ cd typechoPath/usr/plugins
 git clone https://github.com/noisky/typecho-plugin-geetest.git Geetest
 ```
 
-#### 2 配置插件
+#### 2 配置Nginx伪静态
+
+如果使用了宝塔面板，可以在站点设置中进行配置。（Apache也是类似，但配置写法不一样）
+
+```conf
+location / {
+  if (!-e $request_filename){
+    rewrite ^(.*)$ /index.php;
+  }
+}
+```
+
+#### 3 配置插件
 极验验证码的 ID 和 KEY 需要到极验官网 `https://www.geetest.com/` 获取；
 
 注册、创建应用的时候，基础版是免费的；
 
-如需开启评论验证码，则需要在你的主题评论模板 `comment.php` 中的任意一行添加如下代码：
+如需开启评论验证码，则需要在你的主题评论模板 `comments.php` 中的任意一行添加如下代码：
 ```
 <div id="captcha"></div><?php Geetest_Plugin::commentCaptchaRender(); ?>
 <script src="https://cdn.jsdelivr.net/npm/jquery@2.2.4/dist/jquery.min.js"></script>
