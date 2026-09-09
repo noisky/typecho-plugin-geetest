@@ -4,15 +4,12 @@ if (!defined('__TYPECHO_ROOT_DIR__')) exit;
 include 'lib/class.geetestlib.php';
 
 /**
- * 极验验证插件，用于用户登录、用户评论时使用极验提供的滑动验证码，适配了Material主题
+ * 极验验证插件，用于用户登录、用户评论时使用极验提供的滑动验证码
  *
  * @package Geetest
- * @author 小胖狐 && 饭饭 && CairBin
- * @version 1.2.1
- * @link http://zsduo.com
- * @link https://ffis.me
- * @link https://cairbin.top
- *
+ * @author 饭饭
+ * @version 1.2.2
+ * @link https://github.com/noisky/typecho-plugin-geetest
  */
 class Geetest_Plugin implements Typecho_Plugin_Interface
 {
@@ -83,7 +80,7 @@ class Geetest_Plugin implements Typecho_Plugin_Interface
         $isOpenGeetestPage = new Typecho_Widget_Helper_Form_Element_Checkbox('isOpenGeetestPage', [
             "typechoLogin" => _t('登录界面'),
             "typechoComment" => _t('评论页面')
-        ], array(), _t('开启极验验证码的页面，勾选则开启'), _t('开启评论验证码后需在主题的评论的模板 comments.php 中添加如下字段：<textarea><div id="captcha"></div><?php Geetest_Plugin::commentCaptchaRender(); ?>&#10;<script src="https://cdn.jsdelivr.net/npm/jquery@2.2.4/dist/jquery.min.js"></script></textarea>'));
+        ], array(), _t('开启极验验证码的页面，勾选则开启'), _t('开启评论验证码后，请将以下代码添加到主题 <code>comments.php</code> 的评论表单内：<br><textarea rows="3" cols="60" readonly="readonly"><div id="captcha"></div>&#10;<?php Geetest_Plugin::commentCaptchaRender(); ?>&#10;<script src="https://cdn.jsdelivr.net/npm/jquery@2.2.4/dist/jquery.min.js"></script></textarea>'));
         
         $captchaId = new Typecho_Widget_Helper_Form_Element_Text('captchaId', null, '', _t('公钥（ID）：'));
         $privateKey = new Typecho_Widget_Helper_Form_Element_Text('privateKey', null, '', _t('私钥（KEY）：'));
@@ -251,57 +248,225 @@ EOF;
         if (!in_array("typechoComment", $isOpenGeetestPage)) {
             return;
         }
+
+        $commentCaptchaError = Typecho_Cookie::get('__geetest_comment_error');
+        if ('1' === $commentCaptchaError) {
+            Typecho_Cookie::delete('__geetest_comment_error');
+            echo '<p class="geetest-error" role="alert">验证码错误，请重新验证</p>';
+        }
+
         $cdnUrl = ($pluginOptions->cdnUrl ? $pluginOptions->cdnUrl : Helper::options()->pluginUrl . '/Geetest/static/gt.min.js');
         $debugMode = (bool)($pluginOptions->debugMode);
-
-        $disableButtonJs = '';
-        $disableSubmitJs = '';
-        if (!$debugMode) {
-            $disableButtonJs = '$("#sub_btn").attr({disabled:true}).addClass("gt-btn-disabled");';
-            $disableSubmitJs = <<<EOF
-            $("#sub_btn").submit(function (e) {
-                var validate = captchaObj.getValidate();
-                if (!validate) {
-                    e.preventDefault();
-                }
-            });
-EOF;
-        }
+        $debugModeJs = $debugMode ? 'true' : 'false';
 
         $ajaxUri = '/index.php/action/geetest?do=ajaxResponseCaptchaData';
 
         echo <<<EOF
         <style rel="stylesheet">
-        #gt-captcha { line-height: 44px; }
+        .gt-captcha { line-height: 44px; }
         .gt-btn-disabled { background-color: #a3b7c1!important; color: #fff!important; cursor: no-drop!important; }
+        .gt-btn-loading { cursor: wait!important; opacity: .8; }
+        .gt-btn-loading::after {
+            content: "";
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            margin-left: 8px;
+            vertical-align: -2px;
+            border: 2px solid rgba(255,255,255,.45);
+            border-top-color: #fff;
+            border-radius: 50%;
+            animation: geetest-button-spin .7s linear infinite;
+        }
+        @keyframes geetest-button-spin {
+            to { transform: rotate(360deg); }
+        }
+        form[data-geetest-pending] button[type="submit"],
+        form[data-geetest-pending] button:not([type]),
+        form[data-geetest-pending] input[type="submit"] {
+            background-color: #a3b7c1!important;
+            color: #fff!important;
+            cursor: no-drop!important;
+            pointer-events: none;
+        }
         </style>
-        
+
         <script src="{$cdnUrl}"></script>
         <script>
+        // jQuery 尚未加载时，先锁定评论表单，避免验证码初始化前提交
+        (function () {
+            if ({$debugModeJs}) {
+                return;
+            }
+
+            var captchaContainer = document.getElementById("captcha");
+            if (!captchaContainer) {
+                return;
+            }
+
+            var formSelector = captchaContainer.getAttribute("data-geetest-form");
+            var form = null;
+            if (formSelector && document.querySelector) {
+                try {
+                    form = document.querySelector(formSelector);
+                } catch (e) {
+                    form = null;
+                }
+            }
+
+            if (!form) {
+                form = captchaContainer.parentNode;
+                while (form && form.nodeName.toLowerCase() !== "form") {
+                    form = form.parentNode;
+                }
+            }
+
+            if (!form) {
+                return;
+            }
+
+            form.setAttribute("data-geetest-pending", "true");
+            form.setAttribute("data-geetest-captcha-valid", "false");
+
+            if (!form.__geetestCaptchaGuard && form.addEventListener) {
+                form.__geetestCaptchaGuard = function (e) {
+                    if (form.getAttribute("data-geetest-captcha-valid") !== "true") {
+                        e.preventDefault();
+                    }
+                };
+                form.addEventListener("submit", form.__geetestCaptchaGuard);
+            }
+
+            var submitSelector = captchaContainer.getAttribute("data-geetest-submit");
+            var submitControl = null;
+            if (submitSelector && form.querySelector) {
+                try {
+                    submitControl = form.querySelector(submitSelector);
+                } catch (e) {
+                    submitControl = null;
+                }
+            }
+            if (!submitControl && submitSelector && document.querySelector) {
+                try {
+                    submitControl = document.querySelector(submitSelector);
+                } catch (e) {
+                    submitControl = null;
+                }
+            }
+            if (!submitControl && form.elements) {
+                for (var i = 0; i < form.elements.length; i++) {
+                    if (form.elements[i].type === "submit") {
+                        submitControl = form.elements[i];
+                        break;
+                    }
+                }
+            }
+
+            if (submitControl) {
+                submitControl.disabled = true;
+                if ((" " + submitControl.className + " ").indexOf(" gt-btn-disabled ") === -1) {
+                    submitControl.className += (submitControl.className ? " " : "") + "gt-btn-disabled";
+                }
+            }
+        })();
+
         function initializeGeetestCaptcha() {
-            $("#captcha").html('<div id="gt-captcha"><p class="waiting">行为验证™ 安全组件加载中...</p></div>');
+            var $ = window.jQuery;
+            if (!$) {
+                return;
+            }
 
-            var jqGtCaptcha = $("#gt-captcha");
-            var jqGtCaptchaWaiting = $("#gt-captcha .waiting");
+            var jqCaptcha = $("#captcha");
+            if (!jqCaptcha.length) {
+                return;
+            }
 
-            // 定义极验验证初始化回调函数
-            var gtInitCallback = function (captchaObj) {
-                captchaObj.appendTo(jqGtCaptcha);
+            var formSelector = jqCaptcha.attr("data-geetest-form");
+            var jqForm = jqCaptcha.closest("form");
+            if (formSelector) {
+                try {
+                    jqForm = $(formSelector).first();
+                } catch (e) {
+                    jqForm = $();
+                }
+            }
 
-                captchaObj.onSuccess(function () {
-                    $('#sub_btn').attr({disabled: false}).removeClass("gt-btn-disabled");
+            var submitSelector = jqCaptcha.attr("data-geetest-submit");
+            var jqSubmit = $();
+            if (jqForm.length) {
+                if (submitSelector) {
+                    try {
+                        jqSubmit = jqForm.find(submitSelector).first();
+                    } catch (e) {
+                        jqSubmit = $();
+                    }
+                } else {
+                    jqSubmit = jqForm.find(":submit").first();
+                }
+            }
+
+            if (!jqForm.length || !jqSubmit.length) {
+                jqCaptcha.html('<p class="geetest-error">极验验证码配置错误：未找到评论表单或提交按钮</p>');
+                return;
+            }
+
+            var previousRequest = jqCaptcha.data("geetestRequest");
+            if (previousRequest && previousRequest.readyState !== 4) {
+                previousRequest.abort();
+            }
+
+            var previousCaptchaObj = jqCaptcha.data("geetestCaptchaObj");
+            if (previousCaptchaObj && typeof previousCaptchaObj.destroy === "function") {
+                previousCaptchaObj.destroy();
+            }
+            jqCaptcha.removeData("geetestCaptchaObj");
+            jqCaptcha.html('<div class="gt-captcha"><p class="waiting">行为验证™ 安全组件加载中...</p></div>');
+
+            var jqGtCaptcha = jqCaptcha.find(".gt-captcha").first();
+            var jqGtCaptchaWaiting = jqGtCaptcha.find(".waiting");
+            var geetestDebugMode = {$debugModeJs};
+            var captchaObj = null;
+
+           jqForm.off("submit.geetest");
+            jqSubmit.prop("disabled", true).removeClass("gt-btn-loading");
+            jqForm.removeAttr("aria-busy");
+           if (!geetestDebugMode) {
+               jqForm.attr("data-geetest-pending", "true").attr("data-geetest-captcha-valid", "false");
+               jqSubmit.prop("disabled", true).addClass("gt-btn-disabled");
+           } else {
+               jqForm.removeAttr("data-geetest-pending").attr("data-geetest-captcha-valid", "true");
+           }
+            jqForm.on("submit.geetest", function (e) {
+                if (!geetestDebugMode && (!captchaObj || !captchaObj.getValidate())) {
+                    e.preventDefault();
+                    return;
+                }
+                jqSubmit.prop("disabled", true).addClass("gt-btn-loading");
+                jqForm.attr("aria-busy", "true");
+            });
+
+           // 定义极验验证初始化回调函数
+            var gtInitCallback = function (captchaInstance) {
+                captchaObj = captchaInstance;
+                captchaInstance.appendTo(jqGtCaptcha);
+                jqCaptcha.data("geetestCaptchaObj", captchaInstance);
+
+                captchaInstance.onSuccess(function () {
+                    if (!geetestDebugMode) {
+                        jqForm.removeAttr("data-geetest-pending").attr("data-geetest-captcha-valid", "true");
+                        jqSubmit.prop("disabled", false).removeClass("gt-btn-disabled");
+                    }
                 });
 
-                captchaObj.onReady(function () {
+                captchaInstance.onReady(function () {
                     jqGtCaptchaWaiting.remove();
-                    // 禁用表单提交按钮
-                    $disableButtonJs
+                    if (!geetestDebugMode) {
+                        jqSubmit.prop("disabled", true).addClass("gt-btn-disabled");
+                    }
                 });
-
-                $disableSubmitJs
             };
 
-            $.ajax({
+            var geetestRequest = $.ajax({
                 url: "{$ajaxUri}&t=" + (new Date()).getTime(),
                 type: "get",
                 dataType: "json",
@@ -312,19 +477,55 @@ EOF;
                         new_captcha: data.new_captcha,
                         product: "{$pluginOptions->dismod}",
                         offline: !data.success,
-                        width: "200px",
+                        width: "200px"
                     }, gtInitCallback);
+                },
+                error: function (xhr, status) {
+                    if (status !== "abort") {
+                        jqGtCaptchaWaiting.text("验证码加载失败，请刷新页面重试");
+                    }
                 }
             });
+            jqCaptcha.data("geetestRequest", geetestRequest);
         }
 
-        // 页面加载时初始化
-        window.onload = initializeGeetestCaptcha;
+        function registerGeetestCaptcha() {
+            var $ = window.jQuery;
+            if (!$) {
+                return false;
+            }
 
-        // PJAX 事件监听器
-        $(document).on('pjax:end', function() {
             initializeGeetestCaptcha();
-        });
+
+            // PJAX 事件监听器，使用命名空间避免重复绑定
+            $(document)
+                .off('pjax:end.geetest')
+                .on('pjax:end.geetest', function() {
+                    initializeGeetestCaptcha();
+                });
+            return true;
+        }
+
+        function waitForGeetestDependencies() {
+            if (registerGeetestCaptcha()) {
+                return;
+            }
+
+            var attempts = 0;
+            var timer = window.setInterval(function () {
+                attempts++;
+                if (registerGeetestCaptcha() || attempts >= 200) {
+                    window.clearInterval(timer);
+                }
+            }, 25);
+        }
+
+        // DOM 解析完成后立即初始化；如果 jQuery 仍在异步加载，则检测到后立即初始化
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', waitForGeetestDependencies);
+        } else {
+            waitForGeetestDependencies();
+        }
     </script>
 EOF;
     }
@@ -342,8 +543,15 @@ EOF;
         //判断是否开启评论页的验证码
         if (in_array("typechoComment", $isOpenGeetestPage)) {
             if (!self::_verifyCaptcha()) {
-                echo "<script language=\"JavaScript\">alert(\"验证失败，请重新验证！\");window.history.go(-1);</script>";
-                exit();
+                Typecho_Cookie::set('__geetest_comment_error', '1');
+                if (isset($comment['text'])) {
+                    Typecho_Cookie::set('__typecho_remember_text', $comment['text']);
+                }
+                $commentReturnAnchor = '#captcha';
+                if (isset($_POST['geetest_return_anchor']) && 'comment_form' === $_POST['geetest_return_anchor']) {
+                    $commentReturnAnchor = '#comment_form';
+                }
+                Typecho_Widget::widget('Widget_Options')->response->goBack($commentReturnAnchor);
             }
         }
         return $comment;
