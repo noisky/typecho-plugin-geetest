@@ -8,7 +8,7 @@ include 'lib/class.geetestlib.php';
  *
  * @package Geetest
  * @author 饭饭
- * @version 1.2.2
+ * @version 1.2.3
  * @link https://github.com/noisky/typecho-plugin-geetest
  */
 class Geetest_Plugin implements Typecho_Plugin_Interface
@@ -249,12 +249,6 @@ EOF;
             return;
         }
 
-        $commentCaptchaError = Typecho_Cookie::get('__geetest_comment_error');
-        if ('1' === $commentCaptchaError) {
-            Typecho_Cookie::delete('__geetest_comment_error');
-            echo '<p class="geetest-error" role="alert">验证码错误，请重新验证</p>';
-        }
-
         $cdnUrl = ($pluginOptions->cdnUrl ? $pluginOptions->cdnUrl : Helper::options()->pluginUrl . '/Geetest/static/gt.min.js');
         $debugMode = (bool)($pluginOptions->debugMode);
         $debugModeJs = $debugMode ? 'true' : 'false';
@@ -427,15 +421,15 @@ EOF;
             var geetestDebugMode = {$debugModeJs};
             var captchaObj = null;
 
-           jqForm.off("submit.geetest");
-            jqSubmit.prop("disabled", true).removeClass("gt-btn-loading");
+            jqForm.off("submit.geetest");
             jqForm.removeAttr("aria-busy");
-           if (!geetestDebugMode) {
-               jqForm.attr("data-geetest-pending", "true").attr("data-geetest-captcha-valid", "false");
-               jqSubmit.prop("disabled", true).addClass("gt-btn-disabled");
-           } else {
-               jqForm.removeAttr("data-geetest-pending").attr("data-geetest-captcha-valid", "true");
-           }
+            if (!geetestDebugMode) {
+                jqForm.attr("data-geetest-pending", "true").attr("data-geetest-captcha-valid", "false");
+                jqSubmit.prop("disabled", true).addClass("gt-btn-disabled").removeClass("gt-btn-loading");
+            } else {
+                jqForm.removeAttr("data-geetest-pending").attr("data-geetest-captcha-valid", "true");
+                jqSubmit.prop("disabled", false).removeClass("gt-btn-disabled gt-btn-loading");
+            }
             jqForm.on("submit.geetest", function (e) {
                 if (!geetestDebugMode && (!captchaObj || !captchaObj.getValidate())) {
                     e.preventDefault();
@@ -534,8 +528,10 @@ EOF;
      * 评论验证码 校验
      * @access public
      * @param array $comment 评论内容
+     * @param mixed $post 评论所属文章
+     * @param mixed $last 过滤链上一次结果
      */
-    public static function commentCaptchaVerify($comment)
+    public static function commentCaptchaVerify($comment, $post = null, $last = null)
     {
         // 取出插件的配置
         $pluginOptions = Helper::options()->plugin('Geetest');
@@ -543,15 +539,45 @@ EOF;
         //判断是否开启评论页的验证码
         if (in_array("typechoComment", $isOpenGeetestPage)) {
             if (!self::_verifyCaptcha()) {
-                Typecho_Cookie::set('__geetest_comment_error', '1');
-                if (isset($comment['text'])) {
-                    Typecho_Cookie::set('__typecho_remember_text', $comment['text']);
+                $message = '验证码错误，请重新验证';
+                $protocol = isset($_POST['comment_error_protocol'])
+                    && is_string($_POST['comment_error_protocol'])
+                    ? trim($_POST['comment_error_protocol'])
+                    : '';
+
+                if (
+                    'comment' === ($comment['type'] ?? null)
+                    && 'prg-v1' === $protocol
+                ) {
+                    if (isset($comment['text'])) {
+                        Typecho_Cookie::set('__typecho_remember_text', $comment['text']);
+                    }
+
+                    Typecho_Cookie::set('__typecho_comment_error', $message);
+
+                    $anchor = null;
+                    if (
+                        isset($_POST['comment_error_anchor'])
+                        && is_string($_POST['comment_error_anchor'])
+                    ) {
+                        $anchorValue = trim($_POST['comment_error_anchor']);
+                        if (preg_match('/^[A-Za-z][A-Za-z0-9_-]*$/', $anchorValue)) {
+                            $anchor = '#' . $anchorValue;
+                        }
+                    }
+
+                    $default = $post && !empty($post->permalink)
+                        ? $post->permalink
+                        : '/';
+
+                    Typecho_Widget::widget('Widget_Options')
+                        ->response
+                        ->goBack($anchor, $default);
+
+                    return $comment;
                 }
-                $commentReturnAnchor = '#captcha';
-                if (isset($_POST['geetest_return_anchor']) && 'comment_form' === $_POST['geetest_return_anchor']) {
-                    $commentReturnAnchor = '#comment_form';
-                }
-                Typecho_Widget::widget('Widget_Options')->response->goBack($commentReturnAnchor);
+
+                throw new Typecho_Widget_Exception($message);
             }
         }
         return $comment;
