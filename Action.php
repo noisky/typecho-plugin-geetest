@@ -20,6 +20,8 @@ class Geetest_Action extends Typecho_Widget implements Widget_Interface_Do
             $this->response->redirect('/');
         }
 
+        // 防止 PHP 诊断信息导致前端 JSON 解析失败
+        $this->response->setContentType('application/json');
         Typecho_Plugin::factory('Geetest')->responseCaptchaData();
     }
 }

@@ -8,7 +8,7 @@ include 'lib/class.geetestlib.php';
  *
  * @package Geetest
  * @author 饭饭
- * @version 1.2.3
+ * @version 1.2.4
  * @link https://github.com/noisky/typecho-plugin-geetest
  */
 class Geetest_Plugin implements Typecho_Plugin_Interface
@@ -111,7 +111,14 @@ class Geetest_Plugin implements Typecho_Plugin_Interface
      */
     public static function responseCaptchaData()
     {
-        @session_start();
+        // 验证码初始化和提交校验依赖同一个 Session
+        if (session_status() !== PHP_SESSION_ACTIVE) {
+            @session_start();
+        }
+
+        if (session_status() !== PHP_SESSION_ACTIVE) {
+            error_log('Geetest: unable to start the session.');
+        }
 
         $pluginOptions = Helper::options()->plugin('Geetest');
         $geetestSdk = new GeetestLib($pluginOptions->captchaId, $pluginOptions->privateKey);
@@ -120,7 +127,7 @@ class Geetest_Plugin implements Typecho_Plugin_Interface
         $agent = $widgetRequest->getAgent();
 
         $data = array(
-            'user_id' => rand(1000, 9999),
+            'user_id' => random_int(1000, 9999),
             'client_type' => self::isMobile($agent) ? 'h5' : 'web',
             'ip_address' => $widgetRequest->getIp()
         );
@@ -140,18 +147,27 @@ class Geetest_Plugin implements Typecho_Plugin_Interface
         $widgetOptions = Typecho_Widget::widget('Widget_Options');
         $widgetRequest = $widgetOptions->request;
         $currentRequestUrl = $widgetRequest->getRequestUrl();
-        if (!stripos($currentRequestUrl, 'login.php')) {
+        if (stripos($currentRequestUrl, 'login.php') === false) {
             return;
         }
         // 取出插件的配置
         $pluginOptions = Helper::options()->plugin('Geetest');
         $isOpenGeetestPage = $pluginOptions->isOpenGeetestPage;
         // 判断是否开启登陆页的验证码
-        if (!in_array("typechoLogin", $isOpenGeetestPage)) {
+        if (!is_array($isOpenGeetestPage) || !in_array('typechoLogin', $isOpenGeetestPage, true)) {
             return;
         }
         $cdnUrl = ($pluginOptions->cdnUrl ? $pluginOptions->cdnUrl : Helper::options()->pluginUrl . '/Geetest/static/gt.min.js');
+        // 分别按 HTML 和 JavaScript 上下文转义配置值
+        $cdnUrlHtml = htmlspecialchars((string)$cdnUrl, ENT_QUOTES, 'UTF-8');
         $debugMode = (bool)($pluginOptions->debugMode);
+        $dismodeJs = json_encode(
+            (string)$pluginOptions->dismod,
+            JSON_HEX_TAG
+            | JSON_HEX_AMP
+            | JSON_HEX_APOS
+            | JSON_HEX_QUOT
+        );
 
         $disableButtonJs = '';
         $disableSubmitJs = '';
@@ -167,7 +183,18 @@ class Geetest_Plugin implements Typecho_Plugin_Interface
 EOF;
         }
 
-        $ajaxUri = '/index.php/action/geetest?do=ajaxResponseCaptchaData';
+        // 同时兼容伪静态和 index.php 路由
+        $ajaxUri = Typecho_Common::url(
+            'action/geetest?do=ajaxResponseCaptchaData',
+            $widgetOptions->index
+        );
+        $ajaxUriJs = json_encode(
+            $ajaxUri,
+            JSON_HEX_TAG
+            | JSON_HEX_AMP
+            | JSON_HEX_APOS
+            | JSON_HEX_QUOT
+        );
 
         echo <<<EOF
         <style rel="stylesheet">
@@ -176,7 +203,7 @@ EOF;
         .gt-btn-disabled { background-color: #a3b7c1!important; color: #fff!important; cursor: no-drop!important; }
         </style>
         
-        <script src="{$cdnUrl}"></script>
+        <script src="{$cdnUrlHtml}"></script>
         <script>
         
         // 获取表单提交按钮
@@ -210,7 +237,7 @@ EOF;
         };
         
         $.ajax({
-            url: "{$ajaxUri}&t=" + (new Date()).getTime(),
+            url: {$ajaxUriJs} + "&t=" + (new Date()).getTime(),
             type: "get",
             dataType: "json",
             success: function (data) {
@@ -219,10 +246,16 @@ EOF;
                     gt: data.gt,
                     challenge: data.challenge,
                     new_captcha: data.new_captcha,
-                    product: "{$pluginOptions->dismod}",
+                    product: {$dismodeJs},
                     offline: !data.success,
                     width: '100%'
                 }, gtInitCallback);
+            },
+            // 初始化失败时给出明确提示，避免页面一直停留在加载状态
+            error: function (xhr, status) {
+                if (status !== "abort") {
+                    jqGtCaptchaWaiting.text("验证码加载失败，请刷新页面重试");
+                }
             }
         });
         </script>
@@ -245,15 +278,35 @@ EOF;
         $pluginOptions = Helper::options()->plugin('Geetest');
         $isOpenGeetestPage = $pluginOptions->isOpenGeetestPage;
         //判断是否开启评论页的验证码
-        if (!in_array("typechoComment", $isOpenGeetestPage)) {
+        if (!is_array($isOpenGeetestPage) || !in_array('typechoComment', $isOpenGeetestPage, true)) {
             return;
         }
 
         $cdnUrl = ($pluginOptions->cdnUrl ? $pluginOptions->cdnUrl : Helper::options()->pluginUrl . '/Geetest/static/gt.min.js');
+        // 配置值会进入不同输出上下文，分别进行转义
+        $cdnUrlHtml = htmlspecialchars((string)$cdnUrl, ENT_QUOTES, 'UTF-8');
         $debugMode = (bool)($pluginOptions->debugMode);
         $debugModeJs = $debugMode ? 'true' : 'false';
+        $dismodeJs = json_encode(
+            (string)$pluginOptions->dismod,
+            JSON_HEX_TAG
+            | JSON_HEX_AMP
+            | JSON_HEX_APOS
+            | JSON_HEX_QUOT
+        );
 
-        $ajaxUri = '/index.php/action/geetest?do=ajaxResponseCaptchaData';
+        // 根据站点当前路由生成接口地址，支持子目录部署
+        $ajaxUri = Typecho_Common::url(
+            'action/geetest?do=ajaxResponseCaptchaData',
+            $options->index
+        );
+        $ajaxUriJs = json_encode(
+            $ajaxUri,
+            JSON_HEX_TAG
+            | JSON_HEX_AMP
+            | JSON_HEX_APOS
+            | JSON_HEX_QUOT
+        );
 
         echo <<<EOF
         <style rel="stylesheet">
@@ -285,7 +338,7 @@ EOF;
         }
         </style>
 
-        <script src="{$cdnUrl}"></script>
+        <script src="{$cdnUrlHtml}"></script>
         <script>
         // jQuery 尚未加载时，先锁定评论表单，避免验证码初始化前提交
         (function () {
@@ -461,7 +514,7 @@ EOF;
             };
 
             var geetestRequest = $.ajax({
-                url: "{$ajaxUri}&t=" + (new Date()).getTime(),
+                url: {$ajaxUriJs} + "&t=" + (new Date()).getTime(),
                 type: "get",
                 dataType: "json",
                 success: function (data) {
@@ -469,7 +522,7 @@ EOF;
                         gt: data.gt,
                         challenge: data.challenge,
                         new_captcha: data.new_captcha,
-                        product: "{$pluginOptions->dismod}",
+                        product: {$dismodeJs},
                         offline: !data.success,
                         width: "200px"
                     }, gtInitCallback);
@@ -533,11 +586,16 @@ EOF;
      */
     public static function commentCaptchaVerify($comment, $post = null, $last = null)
     {
+        // Trackback/Pingback 不提交 Geetest 字段，不参与评论验证码校验
+        if (isset($comment['type']) && $comment['type'] !== 'comment') {
+            return $comment;
+        }
+
         // 取出插件的配置
         $pluginOptions = Helper::options()->plugin('Geetest');
         $isOpenGeetestPage = $pluginOptions->isOpenGeetestPage;
         //判断是否开启评论页的验证码
-        if (in_array("typechoComment", $isOpenGeetestPage)) {
+        if (is_array($isOpenGeetestPage) && in_array('typechoComment', $isOpenGeetestPage, true)) {
             if (!self::_verifyCaptcha()) {
                 $message = '验证码错误，请重新验证';
                 $protocol = isset($_POST['comment_error_protocol'])
@@ -593,7 +651,7 @@ EOF;
         $pluginOptions = Helper::options()->plugin('Geetest');
         $isOpenGeetestPage = $pluginOptions->isOpenGeetestPage;
         //判断是否开启评论页的验证码
-        if (in_array("typechoLogin", $isOpenGeetestPage)) {
+        if (is_array($isOpenGeetestPage) && in_array('typechoLogin', $isOpenGeetestPage, true)) {
             if (!self::_verifyCaptcha()) {
                 Typecho_Widget::widget('Widget_Notice')->set(_t('验证码错误'), 'error');
                 Typecho_Widget::widget('Widget_User')->logout();
@@ -614,12 +672,20 @@ EOF;
             return 0;
         }
 
-        @session_start();
+        // 校验阶段必须复用初始化阶段的 Session
+        if (session_status() !== PHP_SESSION_ACTIVE) {
+            @session_start();
+        }
+
+        if (session_status() !== PHP_SESSION_ACTIVE) {
+            error_log('Geetest: unable to start the session while verifying.');
+            return 0;
+        }
 
         $pluginOptions = Helper::options()->plugin('Geetest');
         $geetestSdk = new GeetestLib($pluginOptions->captchaId, $pluginOptions->privateKey);
 
-        if (!empty($_SESSION['gt_server_ok'])) {
+        if (!empty($_SESSION['gt_server_ok']) && isset($_SESSION['gt_user_id'])) {
 
             $widgetRequest = Typecho_Widget::widget('Widget_Options')->request;
             $agent = $widgetRequest->getAgent();

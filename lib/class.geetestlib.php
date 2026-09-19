@@ -11,6 +11,9 @@ class GeetestLib {
     public static $connectTimeout = 1;
     public static $socketTimeout  = 1;
 
+    // 显式声明属性，避免 PHP 8.2+ 动态属性弃用警告
+    private $captcha_id;
+    private $private_key;
     private $response;
 
     public function __construct($captcha_id, $private_key) {
@@ -32,7 +35,8 @@ class GeetestLib {
         $query = http_build_query($data);
         $url = "http://api.geetest.com/register.php?" . $query;
         $challenge = $this->send_request($url);
-        if (strlen($challenge) != 32) {
+        // 接口异常时切换到极验离线模式
+        if (!is_string($challenge) || strlen($challenge) !== 32) {
             $this->failback_process();
             return 0;
         }
@@ -96,6 +100,11 @@ class GeetestLib {
      * @return int
      */
     public function success_validate($challenge, $validate, $seccode,$param, $json_format=1) {
+        // 拒绝非字符串参数，避免 PHP 8.x 类型错误
+        if (!is_string($challenge) || !is_string($validate) || !is_string($seccode)) {
+            return 0;
+        }
+
         if (!$this->check_validate($challenge, $validate)) {
             return 0;
         }
@@ -110,15 +119,22 @@ class GeetestLib {
         $query = array_merge($query,$param);
         $url          = "http://api.geetest.com/validate.php";
         $codevalidate = $this->post_request($url, $query);
-        $obj = json_decode($codevalidate,true);
-        if ($obj === false){
+        // 极验返回异常或非 JSON 时，验证直接失败
+        if (!is_string($codevalidate) || $codevalidate === '') {
             return 0;
         }
-        if ($obj['seccode'] == md5($seccode)) {
+
+        $obj = json_decode($codevalidate, true);
+        if (!is_array($obj) || !isset($obj['seccode']) || !is_string($obj['seccode'])) {
+            return 0;
+        }
+
+        // 使用时序安全比较，避免直接比较验证码摘要
+        if (hash_equals(md5($seccode), $obj['seccode'])) {
             return 1;
-        } else {
-            return 0;
         }
+
+        return 0;
     }
 
     /**
@@ -130,11 +146,16 @@ class GeetestLib {
      * @return int
      */
     public function fail_validate($challenge, $validate, $seccode) {
-        if(md5($challenge) == $validate){
-            return 1;
-        }else{
+        if (!is_string($challenge) || !is_string($validate) || !is_string($seccode)) {
             return 0;
         }
+
+        // 离线模式使用挑战值摘要完成本地校验
+        if (hash_equals(md5($challenge), $validate)) {
+            return 1;
+        }
+
+        return 0;
     }
 
     /**
@@ -143,10 +164,12 @@ class GeetestLib {
      * @return bool
      */
     private function check_validate($challenge, $validate) {
-        if (strlen($validate) != 32) {
+        if (!is_string($challenge) || !is_string($validate) || strlen($validate) !== 32) {
             return false;
         }
-        if (md5($this->private_key . 'geetest' . $challenge) != $validate) {
+
+        // 使用时序安全比较校验正常模式签名
+        if (!hash_equals(md5($this->private_key . 'geetest' . $challenge), $validate)) {
             return false;
         }
 
@@ -167,10 +190,15 @@ class GeetestLib {
             curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, self::$connectTimeout);
             curl_setopt($ch, CURLOPT_TIMEOUT, self::$socketTimeout);
             curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
-            $curl_errno = curl_errno($ch);
+            // 先执行请求，再读取 cURL 错误状态
             $data = curl_exec($ch);
-            curl_close($ch);
-            if ($curl_errno >0) {
+            $curl_errno = curl_errno($ch);
+
+            // PHP 8.5 中 curl_close() 已弃用且无实际作用
+            if (PHP_VERSION_ID < 80500) {
+                curl_close($ch);
+            }
+            if ($curl_errno > 0 || $data === false) {
                 return 0;
             }else{
                 return $data;
@@ -225,7 +253,10 @@ class GeetestLib {
                 $this->triggerError($err);
             }
 
-            curl_close($ch);
+            // PHP 8.5 中 curl_close() 已弃用且无实际作用
+            if (PHP_VERSION_ID < 80500) {
+                curl_close($ch);
+            }
         } else {
             if ($postdata) {
                 $opts    = array(
@@ -250,6 +281,7 @@ class GeetestLib {
      * @param $err
      */
     private function triggerError($err) {
-        trigger_error($err);
+        // 错误写入日志，避免污染 Geetest JSON 响应
+        error_log($err);
     }
 }

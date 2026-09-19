@@ -11,6 +11,8 @@
 - 兼容 jQuery 延迟加载和 PJAX，验证码初始化前会阻止表单提交，验证成功后恢复提交。
 - 增加提交中状态和重复提交防护；验证码加载失败时显示重试提示。
 - 提供调试模式，可跳过前端验证码拦截，但服务端校验仍然有效。
+- 根据 Typecho 站点地址生成验证码接口，支持子目录、启用伪静态或保留 `index.php` 的部署方式。
+- 兼容 PHP 8.2 及以上版本，并避免 PHP 8.5 中已弃用的 cURL 关闭调用。
 
 ### 安装
 
@@ -25,7 +27,7 @@ git clone https://github.com/noisky/typecho-plugin-geetest.git Geetest
 
 ### 配置伪静态
 
-插件通过 `/index.php/action/geetest?do=ajaxResponseCaptchaData` 获取验证码初始化数据。站点需要能够正常访问 Typecho 的 Action 路由；使用 Nginx 时可参考以下配置：
+插件会根据 Typecho 的站点地址自动生成 `action/geetest?do=ajaxResponseCaptchaData` 接口地址，不需要手动填写路径。站点仍需确保 Typecho Action 路由可访问；使用 Nginx 伪静态时可参考以下配置：
 
 ```nginx
 location / {
@@ -50,7 +52,7 @@ location / {
 | 引入 JS 的 CDN 加速地址 | 填写极验前端脚本地址，建议使用 HTTPS；留空时使用插件自带的 `static/gt.min.js`。 |
 | 调试模式 | 默认关闭；开启后跳过验证码前端校验拦截，初始化时不会禁用提交按钮；提交时仍保留防重复提交锁，服务端校验仍然有效。 |
 
-公钥和私钥需要在 [极验官网](https://www.geetest.com/) 获取。服务端还需要能访问极验接口，并且 PHP Session 可正常工作。
+公钥和私钥需要在 [极验官网](https://www.geetest.com/) 获取。服务端还需要能访问极验接口，并且 PHP Session 可正常工作；验证码初始化与提交校验必须使用同一个 Session。
 
 ### 评论验证码集成
 
@@ -134,7 +136,9 @@ if ('' !== $commentError) {
 
 ### 验证范围与请求要求
 
-勾选“评论页面”后，服务端会检查 `geetest_challenge`、`geetest_validate` 和 `geetest_seccode`。缺少任一字段都会验证失败；使用 Trackback 或 Pingback 时，也需要确认请求方支持这套验证码流程。
+勾选“评论页面”后，普通评论的服务端会检查 `geetest_challenge`、`geetest_validate` 和 `geetest_seccode`，缺少任一字段都会验证失败。Trackback 和 Pingback 不提交这些字段，因此不参与 Geetest 校验。
+
+验证码初始化失败时，请优先检查浏览器网络面板中的 `action/geetest` 请求、PHP 错误日志、Session 写入权限，以及服务器到极验接口的网络连通性。
 
 ### 截图
 
